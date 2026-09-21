@@ -86,7 +86,7 @@ from geokachel.utm import central_meridian, to_latlon, to_utm, zone_for
 from geokachel.window import GROUND, SEA, Window
 from geokachel.xyz import read_grid
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 #: The day every source in this registry last answered as it should
 #: (`geokachel check`). An entry older than a season deserves a re-probe.
