@@ -169,3 +169,66 @@ def test_a_ragged_border_tile_is_read_at_its_true_size() -> None:
     assert int(np.isnan(raster.values).sum()) == 5
     assert raster.values[0][1] == pytest.approx(101.0)
     assert raster.values[3][3] == pytest.approx(133.0)
+
+
+# --- A tile that was only partly surveyed must still be the whole tile ---
+
+def _partial(west: int, south: int, keep, *, side: int = 10, cell: float = 1.0,
+             centres: bool = True) -> bytes:
+    """A tile of `side` cells a side, with only the cells `keep(row, col)`
+    present — what a coastal or border tile looks like."""
+    shift = 0.5 if centres else 0.0
+    lines = []
+    for r in range(side):
+        north = south + side - 1 - r + shift
+        for c in range(side):
+            if keep(r, c):
+                lines.append(f"{west + c + shift:.2f} {north:.2f} {100 + r * 10 + c:.2f}")
+    return ("\n".join(lines) + "\n").encode()
+
+
+def test_a_partly_surveyed_tile_is_placed_in_its_own_frame() -> None:
+    """Measured on 2026-09-21: Schleswig-Holstein's border tiles carry 730,232
+    lines rather than a million, and Bremerhaven's surface tiles are clipped to
+    the coast. Decoded to the size of their data and then placed at the tile's
+    corner — as every caller does — a north-east quarter landed half a tile
+    south-west of where it was surveyed. In its own frame it stays put."""
+    north_east = _partial(575_000, 6_022_000, lambda r, c: r < 5 and c >= 5)
+    raster = read_grid(north_east, cell_m=1.0, frame=(575_000.0, 6_022_010.0, 10, 10))
+
+    assert (raster.width, raster.height) == (10, 10)
+    assert raster.values[0][5] == pytest.approx(105.0)     # its north-west corner
+    assert raster.values[4][9] == pytest.approx(149.0)     # its south-east corner
+    assert np.isnan(raster.values[0][4]), "the west half was never surveyed"
+    assert np.isnan(raster.values[5][5]), "nor was the south half"
+
+
+def test_without_a_frame_the_raster_is_only_the_data() -> None:
+    """The old behaviour, kept for callers that never place by a tile corner —
+    and the reason every caller that does must pass the frame."""
+    north_east = _partial(575_000, 6_022_000, lambda r, c: r < 5 and c >= 5)
+    raster = read_grid(north_east, cell_m=1.0)
+    assert (raster.width, raster.height) == (5, 5)
+
+
+def test_corners_are_placed_like_centres() -> None:
+    """Bremen writes each cell by its south-west corner (`465000 5896999`)
+    where the other states write its centre (`575000.50 6022999.50`). Both
+    must land in the same cell of the frame, or Bremen's ground is half a
+    metre off — and at a row boundary, a whole row."""
+    frame = (575_000.0, 6_022_010.0, 10, 10)
+    by_centre = read_grid(_partial(575_000, 6_022_000, lambda r, c: True),
+                          cell_m=1.0, frame=frame)
+    by_corner = read_grid(_partial(575_000, 6_022_000, lambda r, c: True, centres=False),
+                          cell_m=1.0, frame=frame)
+    assert np.array_equal(by_centre.values, by_corner.values)
+    assert by_corner.values[0][0] == pytest.approx(100.0)
+    assert by_corner.values[9][9] == pytest.approx(199.0)
+
+
+def test_a_value_outside_its_own_tile_is_not_drawn_into_it() -> None:
+    """A neighbour's overlap row, if a state ever ships one, belongs to the
+    neighbour."""
+    body = _partial(575_000, 6_022_000, lambda r, c: True) + b"575003.50 6022020.50 999.00\n"
+    raster = read_grid(body, cell_m=1.0, frame=(575_000.0, 6_022_010.0, 10, 10))
+    assert np.nanmax(raster.values) < 999.0

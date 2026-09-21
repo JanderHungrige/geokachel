@@ -31,7 +31,7 @@ from geokachel.tile_cache import Fetch, TileCache
 from geokachel.tile_grid import TileLookup, TileSource, corner_in
 from geokachel.tile_index import SAFE_NAME
 from geokachel.tile_zip import ArchiveError, named
-from geokachel.xyz import read_grid
+from geokachel.xyz import Frame, read_grid
 
 log = logging.getLogger(__name__)
 
@@ -77,14 +77,29 @@ def cache_key(source: TileSource, east_km: int, north_km: int) -> str:
             f"{source.tile_name(east_km, north_km)}.{'zip' if source.zipped else suffix}")
 
 
-def decode(source: TileSource, body: bytes, cell_m: float) -> Raster:
+def frame_of(source: TileSource, corner: tuple[int, int], cell_m: float) -> Frame:
+    """The whole tile at this corner: its west and north edges, and its size.
+
+    What a partly surveyed tile must be decoded into, so that it is placed as
+    the tile it is rather than as the part of it that was surveyed.
+    """
+    east_km, north_km = corner
+    side = int(round(source.tile_km * 1000 / cell_m))
+    return (east_km * 1000.0, (north_km + source.tile_km) * 1000.0, side, side)
+
+
+def decode(source: TileSource, body: bytes, cell_m: float,
+           corner: tuple[int, int] | None = None) -> Raster:
     """One tile's bytes as a raster, whichever way the state writes them.
 
-    Six states publish a height grid as text rather than as an image (doc 103).
-    It decodes to the same north-up raster, so nothing downstream knows.
+    Several states publish a height grid as text rather than as an image. It
+    decodes to the same north-up raster, so nothing downstream knows — and,
+    given the tile's `corner`, to the *whole* tile even where only part of it
+    was surveyed, because every caller places it by that corner.
     """
     if source.fmt == "XYZ":
-        return read_grid(body, cell_m=cell_m, max_pixels=WHOLE_TILE_PIXELS)
+        frame = frame_of(source, corner, cell_m) if corner is not None else None
+        return read_grid(body, cell_m=cell_m, max_pixels=WHOLE_TILE_PIXELS, frame=frame)
     return read_raster(body, max_pixels=WHOLE_TILE_PIXELS)
 
 
@@ -92,9 +107,10 @@ def parts(source: TileSource, data: bytes, corner: tuple[int, int],
            cell_m: float) -> list[tuple[tuple[int, int], Raster]]:
     """The rasters in what arrived, each with the corner it belongs at."""
     if not source.zipped:
-        return [(corner, decode(source, data, cell_m))]
-    return [(corner_in(name, corner), decode(source, body, cell_m))
-            for name, body in named(data, want=INSIDE[source.fmt])]
+        return [(corner, decode(source, data, cell_m, corner))]
+    placed = [(corner_in(name, corner), body)
+              for name, body in named(data, want=INSIDE[source.fmt])]
+    return [(at, decode(source, body, cell_m, at)) for at, body in placed]
 
 
 #: A state's list of what it holds, parsed once per process. Rheinland-Pfalz's
@@ -218,6 +234,7 @@ __all__ = [
     "addressed",
     "cache_key",
     "decode",
+    "frame_of",
     "parts",
     "rasters",
     "tiles_across",
