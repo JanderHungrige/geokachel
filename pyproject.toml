@@ -28,9 +28,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/JanderHungrige/NinaNatur"
-Source = "https://github.com/JanderHungrige/NinaNatur/tree/main/packages/geokachel"
-Issues = "https://github.com/JanderHungrige/NinaNatur/issues"
+Homepage = "https://github.com/JanderHungrige/geokachel"
+Source = "https://github.com/JanderHungrige/geokachel"
+Issues = "https://github.com/JanderHungrige/geokachel/issues"
+Changelog = "https://github.com/JanderHungrige/geokachel/releases"
 
 [project.scripts]
 geokachel = "geokachel.cli:main"
