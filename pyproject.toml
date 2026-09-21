@@ -1,6 +1,6 @@
 [project]
 name = "geokachel"
-version = "0.2.0"
+version = "0.2.1"
 description = "Official German open elevation, surface, building and point-cloud data — one interface, all sixteen Bundesländer, with the credit each licence requires."
 readme = "README.md"
 license = "MIT"
