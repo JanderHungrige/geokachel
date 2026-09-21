@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from geokachel.net import get_range, size_of
+from geokachel.net import FetchError, get_range, size_of
 from geokachel.remote_zip import Ranged, Sized, member_of, names_in
 from geokachel.tiff import WHOLE_TILE_PIXELS, Raster, TiffError, read_raster
 from geokachel.tile_cache import Fetch, TileCache
@@ -154,7 +154,7 @@ def _held(archives: tuple[str, ...], *, sized: Sized | None = None,
         for url in archives:
             try:
                 inside = names_in(url, size=look, ranged=reach)
-            except (OSError, ValueError) as trouble:
+            except (FetchError, OSError, ValueError) as trouble:
                 # One region's archive missing is that region without ground,
                 # not the state without ground.
                 log.warning("an archive did not answer; that region stays unknown",
@@ -208,20 +208,28 @@ def _from_archive(where: tuple[str, str], sized: Sized | None = None,
 
 
 def rasters(source: TileSource, corners: list[tuple[int, int]], cache: TileCache,
-             fetch: Fetch, cell_m: float = CELL_M) -> dict[tuple[int, int], Raster]:
+            fetch: Fetch, cell_m: float = CELL_M, *, sized: Sized | None = None,
+            ranged: Ranged | None = None) -> dict[tuple[int, int], Raster]:
     """The tiles that arrived. One missing is a hole, not a failure: a state's
-    portal short of a tile is not a reason for a garden to have no ground."""
+    portal short of a tile is not a reason for a garden to have no ground.
+
+    `sized` and `ranged` are only asked of a state that publishes no tile at
+    all and has one read out of a regional archive; the defaults are the
+    polite ones in `geokachel.net`.
+    """
     got: dict[tuple[int, int], Raster] = {}
     try:
-        wanted = addressed(source, corners, cache, fetch)
-    except (OSError, ValueError) as trouble:
+        wanted = addressed(source, corners, cache, fetch, sized=sized, ranged=ranged)
+    except (FetchError, OSError, ValueError) as trouble:
         log.warning("a state's tile list could not be read; no ground from it",
                     extra={"source": source.name, "why": type(trouble).__name__})
         return got
     for corner, key, grab in wanted:
         try:
             got.update(parts(source, cache.fetched(key, grab), corner, cell_m))
-        except (OSError, ValueError, TiffError, ArchiveError) as trouble:
+        # A refusal is a FetchError, which is neither of the others: without
+        # it one 404 took every other tile of the window down with it.
+        except (FetchError, OSError, ValueError, TiffError, ArchiveError) as trouble:
             log.warning("a tile did not arrive; that ground stays unknown",
                         extra={"source": source.name, "tile": f"{corner[0]}_{corner[1]}",
                                "why": type(trouble).__name__})
