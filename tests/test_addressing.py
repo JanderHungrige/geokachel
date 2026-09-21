@@ -1,12 +1,15 @@
 """The tiles that arrived: one missing is a hole, never the whole answer."""
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from geokachel.addressing import frame_of, rasters
+from geokachel import addressing
+from geokachel.addressing import addressed, frame_of, rasters
 from geokachel.geotiff import write_geotiff
 from geokachel.net import FetchError
 from geokachel.tile_cache import TileCache
@@ -56,3 +59,56 @@ def test_a_tiles_frame_is_the_whole_tile(tile_km: int, cell: float, side: int) -
     west, north, cols, rows = frame_of(_source(tile_km=tile_km), (410, 5656), cell)
 
     assert (west, north, cols, rows) == (410_000.0, (5656 + tile_km) * 1000.0, side, side)
+
+
+def _archive(*names: str) -> bytes:
+    """A regional archive, as Saarland publishes one per district."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name in names:
+            archive.writestr(name, b"a tile")
+    return buffer.getvalue()
+
+
+def test_an_archive_that_did_not_answer_is_asked_again_later(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A district whose archive missed one request used to stay missing until
+    the program restarted. Now it is asked again once `RETRY_AFTER_S` has
+    passed — and not before, so a portal that is down is not asked on every
+    call — while the directory that did answer is never read twice."""
+    west, east = "https://archive.test/west.zip", "https://archive.test/east.zip"
+    archives = {west: _archive("dgm1_32_353_5455_1_sl.tif"),
+                east: _archive("dgm1_32_360_5460_1_sl.tif")}
+    down, asked, clock = {east}, [], [1000.0]
+    monkeypatch.setattr(addressing, "_HELD", {})
+    monkeypatch.setattr(addressing, "_FAILED_AT", {})
+    monkeypatch.setattr(addressing, "_now", lambda: clock[0])
+
+    def sized(url: str) -> int:
+        asked.append(url)
+        if url in down:
+            raise FetchError(f"HEAD {url} refused: 503", status=503)
+        return len(archives[url])
+
+    def ranged(url: str, start: int, end: int) -> bytes:
+        return archives[url][start:end + 1]
+
+    def nothing(url: str) -> bytes:
+        raise AssertionError(f"an archived state fetches no whole file: {url}")
+
+    source = _source(_url=None, _name=None, archives=(west, east))
+
+    def found() -> set[tuple[int, int]]:
+        return {corner for corner, _key, _grab in addressed(
+            source, [(353, 5455), (360, 5460)], TileCache(tmp_path / "c", 10**9), nothing,
+            sized=sized, ranged=ranged)}
+
+    assert found() == {(353, 5455)}                  # the east is down: a hole there
+    down.clear()
+    clock[0] += addressing.RETRY_AFTER_S - 1
+    assert found() == {(353, 5455)}                  # and left alone for a while
+    assert asked.count(east) == 1
+
+    clock[0] += 1
+    assert found() == {(353, 5455), (360, 5460)}     # asked again, and back
+    assert (asked.count(west), asked.count(east)) == (1, 2)

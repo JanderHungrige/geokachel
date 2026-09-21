@@ -1,6 +1,15 @@
 # Changelog
 
-## 0.2.0 — not yet released
+## 0.2.1 — not yet released
+
+### Fixed
+
+- A regional archive (Saarland, Hamburg, Bremen) that did not answer once was
+  remembered as empty, so its region stayed missing until the program
+  restarted. Only answers are remembered now; an archive that failed is asked
+  again after five minutes (`addressing.RETRY_AFTER_S`).
+
+## 0.2.0 — 2026-09-21
 
 A front door: a point and a Bundesland in, heights out, in every state.
 
