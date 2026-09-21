@@ -1,0 +1,60 @@
+# Every push and pull request. Fast on purpose: no network, no portals.
+#
+# The tests here never touch a state surveying office. Everything they check is
+# built in the test — archives, grids, indexes, malformed headers — because a
+# suite that needs sixteen public portals to be up fails on their maintenance
+# window and teaches people to ignore red. Whether those portals still serve
+# what this registry claims is `sources.yml`, weekly, and it opens an issue
+# instead of failing.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: mypy geokachel
+      - run: pytest -q
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - run: pip install --upgrade build twine
+      - run: python -m build
+      # A wheel that claims to be typed and ships no marker silently un-types
+      # every consumer. That happened once; it does not happen again.
+      - name: The wheel must carry py.typed and both licence files
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob, zipfile, sys
+          names = zipfile.ZipFile(sorted(glob.glob("dist/*.whl"))[-1]).namelist()
+          need = {"py.typed": any(n.endswith("geokachel/py.typed") for n in names),
+                  "LICENSE": any(n.endswith("licenses/LICENSE") for n in names),
+                  "NOTICE": any(n.endswith("licenses/NOTICE") for n in names)}
+          for what, there in need.items():
+              print(f"{'ok ' if there else 'MISSING'} {what}")
+          sys.exit(0 if all(need.values()) else 1)
+          PY
+      - run: twine check dist/*

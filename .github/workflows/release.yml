@@ -1,0 +1,92 @@
+# Publish to PyPI when a version tag is pushed.
+#
+# **No token anywhere.** This uses PyPI Trusted Publishing (OIDC): GitHub mints
+# a short-lived identity for this exact workflow in this exact repository, and
+# PyPI trusts that instead of a long-lived secret. Nothing to leak, nothing to
+# rotate, nothing to paste into a terminal.
+#
+# One-time setup on PyPI — https://pypi.org/manage/account/publishing/ :
+#
+#     PyPI Project Name   geokachel
+#     Owner               JanderHungrige
+#     Repository name     geokachel
+#     Workflow name       release.yml
+#     Environment name    pypi
+#
+# Then, to release:
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# A PyPI version can never be reused, even after deletion, so the tag is the
+# point of no return. `test` below publishes to TestPyPI first if you want a
+# rehearsal: push a tag ending in `rc1`.
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+rc[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      - name: The tag and the version must agree
+        run: |
+          set -euo pipefail
+          tagged="${GITHUB_REF_NAME#v}"
+          declared=$(python -c "import tomllib,pathlib; \
+            print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "tag $tagged, pyproject $declared"
+          # A version published under the wrong number cannot be taken back.
+          [ "$tagged" = "$declared" ] || {
+            echo "::error::tag v$tagged does not match pyproject $declared"; exit 1; }
+
+      - run: pip install --upgrade build
+      - run: python -m build
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist
+          path: dist/
+
+  rehearse:
+    # A tag ending in rc goes to TestPyPI and no further.
+    if: contains(github.ref_name, 'rc')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish:
+    if: ${{ !contains(github.ref_name, 'rc') }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # The whole mechanism: a short-lived OIDC identity instead of a secret.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

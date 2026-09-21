@@ -35,6 +35,9 @@ Issues = "https://github.com/JanderHungrige/NinaNatur/issues"
 [project.scripts]
 geokachel = "geokachel.cli:main"
 
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -46,3 +49,23 @@ packages = ["geokachel"]
 # checker sees `Any` for all of this, and says nothing about it.
 [tool.hatch.build.targets.wheel.force-include]
 "geokachel/py.typed" = "geokachel/py.typed"
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+# 3.12, not the 3.11 floor this package supports. numpy's own type stubs use
+# PEP 695 `type` statements, which mypy refuses to parse when told to target
+# 3.11 — so the first module that imports numpy turns the whole strict check
+# red. The runtime floor stays 3.11; only the checker is told 3.12.
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
