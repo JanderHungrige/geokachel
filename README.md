@@ -31,6 +31,7 @@ two coordinate zones. geokachel reads all of them, so you only have to say
 - [UTM, and the numbers in a tile's name](#utm-and-the-numbers-in-a-tiles-name)
 - [Going lower: the tiles themselves](#going-lower-the-tiles-themselves)
 - [Accuracy, age and limits](#accuracy-age-and-limits)
+- [Known gaps — help welcome](#known-gaps--help-welcome)
 - [Checking that it is all still there](#checking-that-it-is-all-still-there)
 - [The credit, and being polite](#the-credit-and-being-polite)
 
@@ -298,18 +299,38 @@ the point clouds and the 3D buildings; `geokachel sources` lists everything.
 - **A survey is a snapshot.** Each state flies its country every few years, and
   a tile may be from any year since about 2010. A surface model shows the trees
   and houses of its flight: a house built since is missing, a tree has grown.
-- **Baden-Württemberg's ground** comes from its coverage service in whole
-  metres, one column short and stretched to fill the square. It is put back
-  onto square one-metre cells, which moves no height by more than half a metre.
-- **Schleswig-Holstein** publishes no surface model, so `surface()` and
-  `object_heights()` raise `Unavailable` there. Its ground works.
 - **A square is at most 2 km a side**, and 25 million cells (a kilometre of
   Bayern's 20 cm surface). For more, loop over squares.
 - **Speed**: a service answers in about a second. Tiles are fetched whole
-  (1–40 MB) the first time — a few seconds to half a minute — and read from
-  the cache after that. Bayern's 20 cm surface takes about 15 seconds to decode.
-- **Buildings (CityGML) and point clouds (LAZ)** are in the registry with their
-  addresses, but not read by this package; use `lxml` or `laspy` on the files.
+  (up to about 50 MB) the first time — a few seconds to half a minute — and read from
+  the cache after that.
+
+## Known gaps — help welcome
+
+What does not work yet, or not well. Each one is written up — what is known,
+what was measured, where in the code to start — under
+[Open work](https://github.com/JanderHungrige/geokachel/blob/main/CONTRIBUTING.md#open-work)
+in the contributing guide. Pull requests and findings are welcome, and so is a
+note that one of these matters to you.
+
+- **Baden-Württemberg's ground is in whole metres.** It comes from the state's
+  coverage service, which also answers one column short (put back onto square
+  cells here, moving no height by more than half a metre). The state publishes
+  its surface models as open tiles; if it publishes its ground that way too,
+  nobody has found where yet.
+- **Schleswig-Holstein has no surface model** here, because none was found
+  openly published. `surface()` and `object_heights()` raise `Unavailable`
+  there; its ground works.
+- **Bayern's 20 cm surface takes about 17 seconds a call**, even from the
+  cache: a tile is 400 compressed blocks and all of them are decoded, when a
+  200 m square needs about 25.
+- **3D buildings (LoD2, CityGML) and laser point clouds (LAZ)** are in the
+  registry — addressed, fetched and cached — but nothing here reads them yet.
+- **The GeoTIFF writer is checked against an independent parser, not against
+  GDAL itself**, which is what QGIS uses. A CI job with rasterio would close that.
+- **States move their files.** A weekly job asks every source and opens an
+  issue when one stops answering; mending the entry is the most common
+  contribution of all.
 
 ## Checking that it is all still there
 
