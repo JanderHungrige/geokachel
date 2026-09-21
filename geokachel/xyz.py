@@ -67,11 +67,23 @@ def _unzoned(east: np.ndarray) -> np.ndarray:
     return east
 
 
-def read_grid(data: bytes, *, cell_m: float, max_pixels: int = MAX_PIXELS) -> Raster:
+#: A frame: the west and north edges of a tile in metres, and its size in cells.
+Frame = tuple[float, float, int, int]
+
+
+def read_grid(data: bytes, *, cell_m: float, max_pixels: int = MAX_PIXELS,
+              frame: Frame | None = None) -> Raster:
     """Decode a text height grid into a north-up raster of metres.
 
     The same shape `read_raster` returns, so everything downstream — the paste,
     the resample, the window — cannot tell which kind of file it came from.
+
+    **Pass `frame` whenever the result will be placed at a tile's corner**,
+    which is what every caller that stitches tiles does. Without one the raster
+    covers only the data that is present, and a partly surveyed tile — a border
+    tile, a stretch of coast — is then drawn at the wrong place: a surveyed
+    north-east quarter lands half a tile to the south-west. That shipped in
+    0.1.0, and was found by asking what a ragged tile decodes to.
     """
     body = _grid_part(data)
     if not body.strip():
@@ -85,6 +97,8 @@ def read_grid(data: bytes, *, cell_m: float, max_pixels: int = MAX_PIXELS) -> Ra
 
     trio = flat.reshape(-1, 3)
     east, north, height = _unzoned(trio[:, 0]), trio[:, 1], trio[:, 2]
+    if frame is not None:
+        return _in_frame(east, north, height, cell_m, frame, max_pixels)
     west, top = east.min(), north.max()
     width = int(round((east.max() - west) / cell_m)) + 1
     rows = int(round((top - north.min()) / cell_m)) + 1
@@ -102,4 +116,30 @@ def read_grid(data: bytes, *, cell_m: float, max_pixels: int = MAX_PIXELS) -> Ra
     return Raster(width=width, height=rows, values=values)
 
 
-__all__ = ["NOT_A_NUMBER", "read_grid"]
+def _in_frame(east: np.ndarray, north: np.ndarray, height: np.ndarray, cell_m: float,
+              frame: Frame, max_pixels: int) -> Raster:
+    """Each value in the cell of the frame its own coordinates put it in.
+
+    States disagree about which point of a cell they write. Most write its
+    centre (`575000.50`); Bremen writes its south-west corner (`465000`). Both
+    are moved to the centre before the cell is chosen, because at a row
+    boundary a corner read as a centre is a whole row out, not half a metre.
+    """
+    west, top, cols, rows = frame
+    if cols < 1 or rows < 1 or cols * rows > max_pixels:
+        raise TiffError(f"a frame of {cols}x{rows} cells is not a window")
+    # Where in its cell the state wrote each value: near 0.5 for a centre,
+    # near 0 (or 1) for a corner. The median decides, so one odd line cannot.
+    offset = float(np.median(((east - west) / cell_m) % 1.0))
+    to_centre = 0.5 * cell_m if (offset < 0.25 or offset > 0.75) else 0.0
+    col = np.floor((east + to_centre - west) / cell_m).astype(np.intp)
+    row = np.floor((top - (north + to_centre)) / cell_m).astype(np.intp)
+    inside = (col >= 0) & (col < cols) & (row >= 0) & (row < rows)
+
+    values = np.full((rows, cols), np.nan, dtype="float32")
+    values[row[inside], col[inside]] = height[inside].astype("float32")
+    values[values == NO_DATA] = np.nan
+    return Raster(width=cols, height=rows, values=values)
+
+
+__all__ = ["NOT_A_NUMBER", "Frame", "read_grid"]

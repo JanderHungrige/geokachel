@@ -50,6 +50,84 @@ They surprised us, each measured rather than assumed:
   expense, with no quota and no contract. Keep the delay, keep the cap, and set
   `GEOKACHEL_USER_AGENT` to something with a contact in it.
 
+## Open work
+
+What does not work yet, or not well, with what is already known. Measured on
+2026-09-21 unless it says otherwise. A finding is worth a pull request on its
+own — a URL that answers, a licence page, a timing — even without the code.
+
+### Baden-Württemberg's ground, in centimetres
+
+`ground(..., state="BW")` asks LGL's INSPIRE coverage service
+(`WCS_INSP_BW_Hoehe_Coverage_DGM1`, `EL.ElevationGridCoverage`). It answers in
+**whole metres** (`vertical_step_m=1.0` in `terrain_sources.py`), and a box W
+metres wide comes back as **W − 1 columns** stretched to fill it — for 200 and
+201 m boxes, whole-metre and half-metre corners, either axis order and
+`SCALEFACTOR=1`; `SCALESIZE` is refused. `assemble._squared` puts the answer
+back onto square cells.
+
+LGL publishes surface models as open tiles:
+`https://opengeodata.lgl-bw.de/data/ndom1/ndom1_32_513_5404_2_bw.zip` (registered
+as `bw-ndom1`) and `…/data/dom1/dom1_32_513_5404_2_bw.zip` (13 MB, not yet
+registered) both answer. The same pattern for the ground,
+`…/data/dgm1/dgm1_32_513_5404_2_bw.zip`, is a 404, and `/data/` refuses a
+listing (403).
+
+To do: find whether and where LGL publishes the DGM1 openly, and under which
+licence. Then a `bw-dgm1` entry in `tile_entries.py` with its probed tile and
+bytes, and `heights.ground_route` preferring tiles that are finer in height than
+the state's service. Registering `bw-dom1` would give Baden-Württemberg a raw
+surface model beside the normalised one.
+
+### Schleswig-Holstein's surface
+
+`surface_route("SH")` is `None`: the state's DGM1 (listed, as text grids) and
+its LoD2 are open, and no open surface model was found when the registry was
+built. To do: find one — tiles or a service — whose licence allows this use,
+and add it with a probed request like every other entry.
+
+### Bayern's 20 cm surface: decode only what a window needs
+
+A `by-dom20` tile is a 51 MB GeoTIFF of 5000 × 5000 float32 cells, LZW without a
+predictor, in **400 blocks of 256 × 256**. `tiff.read_raster` decodes all 400 —
+about 17 seconds, on every call, cache or not — when a 200 m window (1000 × 1000
+cells) touches at most 36 of them. `by-dgm1` is the same story at a smaller
+scale: 500 strips of two rows each.
+
+To do: let the reader take a pixel window and decode only the blocks or strips
+that intersect it. `assemble.from_tiles` knows each tile's corner and the
+window's edges, so it can pass that window down. `tiff.py` is already the
+largest module; moving its strip and block assembly into a module of its own
+first keeps it readable.
+
+### Buildings and point clouds
+
+`lod2_tiles_for()` answers in 13 states and `laser_tiles_for()` in 7: CityGML
+and LAZ tiles that `addressed()` finds and `TileCache.file_for()` keeps on disk
+(a laser tile can be 445 MB, so stream it from the file rather than holding the
+bytes). Nothing in the package reads either yet.
+
+To do: optional readers, behind an extra so that the core keeps its three
+dependencies — each building's footprint, measured height and roof type from
+LoD2 (`defusedxml` is already here), or a canopy or first-return surface from
+LAZ with `laspy`.
+
+### The GeoTIFF writer, against GDAL
+
+`tests/test_geotiff.py` checks `write_geotiff` against the package's own reader,
+and it was checked once by hand with `tifffile`. Nothing checks it against GDAL,
+which is what QGIS and rasterio read with. To do: a CI job that installs
+`rasterio` and asserts a written window's bounds, CRS (EPSG:25832 and 25833),
+NaN no-data and Copyright tag, with `pytest.importorskip("rasterio")` so the
+other jobs skip it.
+
+### A source that moved
+
+The weekly `sources` workflow asks every source and opens an issue when one
+stops answering as its entry says. Mending it is the commonest contribution:
+find the new address, ask it for a real tile, and record the answer — see
+[An entry is a request that was answered](#an-entry-is-a-request-that-was-answered).
+
 ## Running it
 
 ```bash

@@ -1,6 +1,6 @@
 [project]
 name = "geokachel"
-version = "0.1.0"
+version = "0.2.0"
 description = "Official German open elevation, surface, building and point-cloud data — one interface, all sixteen Bundesländer, with the credit each licence requires."
 readme = "README.md"
 license = "MIT"
@@ -31,7 +31,7 @@ dependencies = [
 Homepage = "https://github.com/JanderHungrige/geokachel"
 Source = "https://github.com/JanderHungrige/geokachel"
 Issues = "https://github.com/JanderHungrige/geokachel/issues"
-Changelog = "https://github.com/JanderHungrige/geokachel/releases"
+Changelog = "https://github.com/JanderHungrige/geokachel/blob/main/CHANGELOG.md"
 
 [project.scripts]
 geokachel = "geokachel.cli:main"
