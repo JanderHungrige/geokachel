@@ -22,6 +22,8 @@ the caller's business.
 from __future__ import annotations
 
 import logging
+import math
+import time
 from collections.abc import Callable
 
 from geokachel.net import FetchError, get_range, size_of
@@ -130,9 +132,21 @@ def _listing(lookup: TileLookup, cache: TileCache,
     return _LISTINGS[lookup.index_url]
 
 
-#: Which archive holds which tile, per set of archives, parsed once. Reading
-#: Saarland's six directories is eighteen requests and two hundred kilobytes.
+#: Which tiles each archive holds, read from its own directory once and kept
+#: for the life of the process. Reading Saarland's six directories is eighteen
+#: requests and two hundred kilobytes.
 _HELD: dict[str, dict[tuple[int, int], tuple[str, str]]] = {}
+#: When an archive last failed to answer. Until 2026-09-21 a failure was kept
+#: like an answer, so a region whose archive missed one request stayed missing
+#: until the program restarted — harmless on the command line, and a hole that
+#: never closed in anything long-running.
+_FAILED_AT: dict[str, float] = {}
+#: How long an archive that did not answer is left alone before it is asked
+#: again: a region missing for five minutes, rather than a public portal that
+#: is down being asked on every call.
+RETRY_AFTER_S = 300.0
+#: The clock, under a name a test can replace.
+_now: Callable[[], float] = time.monotonic
 
 
 def _held(archives: tuple[str, ...], *, sized: Sized | None = None,
@@ -148,25 +162,33 @@ def _held(archives: tuple[str, ...], *, sized: Sized | None = None,
     can still replace the module's own.
     """
     look, reach = sized or size_of, ranged or get_range
-    key = "\n".join(archives)
-    if key not in _HELD:
-        found: dict[tuple[int, int], tuple[str, str]] = {}
-        for url in archives:
-            try:
-                inside = names_in(url, size=look, ranged=reach)
-            except (FetchError, OSError, ValueError) as trouble:
-                # One region's archive missing is that region without ground,
-                # not the state without ground.
-                log.warning("an archive did not answer; that region stays unknown",
-                            extra={"archive": url, "why": type(trouble).__name__})
-                continue
-            for name in inside:
-                leaf = name.rsplit("/", 1)[-1]
-                corner = corner_in(leaf, (0, 0))
-                if corner != (0, 0) and SAFE_NAME.match(leaf):
-                    found[corner] = (url, name)
-        _HELD[key] = found
-    return _HELD[key]
+    found: dict[tuple[int, int], tuple[str, str]] = {}
+    for url in archives:
+        if url not in _HELD and _now() - _FAILED_AT.get(url, -math.inf) >= RETRY_AFTER_S:
+            _read_directory(url, look, reach)
+        found.update(_HELD.get(url, {}))
+    return found
+
+
+def _read_directory(url: str, look: Sized, reach: Ranged) -> None:
+    """One archive's directory into `_HELD`, or the time it failed into
+    `_FAILED_AT`. One region's archive missing is that region without ground,
+    not the state without ground."""
+    try:
+        inside = names_in(url, size=look, ranged=reach)
+    except (FetchError, OSError, ValueError) as trouble:
+        _FAILED_AT[url] = _now()
+        log.warning("an archive did not answer; that region stays unknown for now",
+                    extra={"archive": url, "why": type(trouble).__name__})
+        return
+    held: dict[tuple[int, int], tuple[str, str]] = {}
+    for name in inside:
+        leaf = name.rsplit("/", 1)[-1]
+        corner = corner_in(leaf, (0, 0))
+        if corner != (0, 0) and SAFE_NAME.match(leaf):
+            held[corner] = (url, name)
+    _HELD[url] = held
+    _FAILED_AT.pop(url, None)
 
 
 def addressed(source: TileSource, corners: list[tuple[int, int]], cache: TileCache,
