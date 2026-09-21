@@ -1,10 +1,13 @@
-"""Ask every source whether it is still there.
+"""Heights for any point in Germany, and whether every source still answers.
 
-    geokachel check                 # all of them, a few kB each
-    geokachel check sn- rp-         # only names containing these
-    geokachel check --quiet         # print only what is wrong
-    geokachel sources               # what this registry knows, and whose it is
-    geokachel credits BY TH         # the exact credit those states require
+    geokachel states                              # what each Bundesland publishes
+    geokachel ground 48.1374 11.5755 --state BY   # the ground there, and whose it is
+    geokachel surface LAT LON --state BY --out x.tif   # roofs and trees, as a GeoTIFF
+    geokachel objects LAT LON --state NW          # how tall they are
+    geokachel credits BY TH                       # the exact credit those states require
+    geokachel sources                             # every tile product in the registry
+    geokachel check                               # ask every source, a few kB each
+    geokachel check sn- rp- --quiet               # only these, and only what is wrong
 
 **Exit code 0 when everything answered as the registry says, 1 when anything
 did not** — so a scheduled job can speak up only when something has changed:
@@ -28,11 +31,12 @@ import sys
 import time
 
 from geokachel import net
+from geokachel.cli_heights import add_commands
 from geokachel.health import Check, Verdict, check_coverage, check_tile_source
 from geokachel.surface_sources import SURFACE_SOURCES
 from geokachel.terrain_sources import TERRAIN_SOURCES
 from geokachel.tile_entries import TILE_SOURCES
-from geokachel.tile_sources import COPERNICUS_GLO30, glo30_url
+from geokachel.tile_sources import COPERNICUS_GLO30, glo30_url, key_of
 
 #: Big enough for the largest list a state publishes — Rheinland-Pfalz's ground
 #: metalink is 12 MB and Schleswig-Holstein's GeoJSON 9 — and small enough that
@@ -64,13 +68,15 @@ def every_check(only: list[str], *, say: bool = True) -> list[Check]:
                                    ranged=net.get_range, present=net.presence))
             time.sleep(net.DELAY_S)
 
-    for registry, kind in ((TERRAIN_SOURCES, "terrain"), (SURFACE_SOURCES, "surface")):
-        for service in registry:
-            name = f"{kind}: {service.state}"
-            if wanted(name):
-                answered = check_coverage(service, get=_capped)
-                note(Check(name, answered.verdict, answered.detail))
-                time.sleep(net.DELAY_S)
+    # Named as a window names its source, so an error's `geokachel check
+    # nw-dgm-wcs` asks exactly the service that failed.
+    services = ([(s, f"{key_of(s.state).lower()}-dgm-wcs") for s in TERRAIN_SOURCES]
+                + [(s, f"{key_of(s.state).lower()}-{s.kind}-wcs") for s in SURFACE_SOURCES])
+    for service, name in services:
+        if wanted(name):
+            answered = check_coverage(service, get=_capped)
+            note(Check(name, answered.verdict, answered.detail))
+            time.sleep(net.DELAY_S)
 
     if wanted("copernicus"):
         # The worldwide fallback, and the only source here that is neither a
@@ -120,14 +126,20 @@ def _sources(chosen: argparse.Namespace) -> int:
 
 def _credits(chosen: argparse.Namespace) -> int:
     """The exact string each licence requires, for whatever you are showing."""
+    everything = ([(s.state, s.name, s.attribution, s.licence) for s in TILE_SOURCES]
+                  + [(key_of(t.state), f"{key_of(t.state).lower()}-dgm-wcs", t.attribution,
+                      t.licence) for t in TERRAIN_SOURCES]
+                  + [(key_of(u.state), f"{key_of(u.state).lower()}-{u.kind}-wcs",
+                      u.attribution, u.licence) for u in SURFACE_SOURCES])
     seen: set[str] = set()
-    for source in TILE_SOURCES:
-        if chosen.only and not any(p.lower() in source.state.lower()
-                                   or p.lower() in source.name.lower() for p in chosen.only):
+    for state, name, attribution, licence in everything:
+        # A state by its key or its name, or a source by part of its own name.
+        if chosen.only and not any(key_of(p) == state or p.lower() in name
+                                   for p in chosen.only):
             continue
-        if source.attribution not in seen:
-            seen.add(source.attribution)
-            print(f"{source.attribution}  [{source.licence}]")
+        if attribution not in seen:
+            seen.add(attribution)
+            print(f"{attribution}  [{licence}]")
     if not seen:
         print("no source matched", file=sys.stderr)
         return 1
@@ -151,6 +163,8 @@ def main() -> int:
     owed = jobs.add_parser("credits", help="the credit each licence requires")
     owed.add_argument("only", nargs="*")
     owed.set_defaults(run=_credits, quiet=False)
+
+    add_commands(jobs)
 
     chosen = parser.parse_args()
     result: int = chosen.run(chosen)
